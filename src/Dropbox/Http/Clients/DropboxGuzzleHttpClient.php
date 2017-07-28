@@ -3,12 +3,9 @@
 namespace Kunnu\Dropbox\Http\Clients;
 
 use GuzzleHttp\Client;
-use GuzzleHttp\Psr7\Request;
-use Psr\Http\Message\StreamInterface;
-use Psr\Http\Message\ResponseInterface;
+use GuzzleHttp\Stream\Stream;
 use GuzzleHttp\Exception\RequestException;
 use Kunnu\Dropbox\Http\DropboxRawResponse;
-use GuzzleHttp\Exception\BadResponseException;
 use Kunnu\Dropbox\Exceptions\DropboxClientException;
 
 /**
@@ -17,21 +14,22 @@ use Kunnu\Dropbox\Exceptions\DropboxClientException;
 class DropboxGuzzleHttpClient implements DropboxHttpClientInterface
 {
     /**
-     * GuzzleHttp client.
+     * GuzzleHttp client
      *
      * @var \GuzzleHttp\Client
      */
     protected $client;
 
     /**
-     * Create a new DropboxGuzzleHttpClient instance.
+     * Create a new DropboxGuzzleHttpClient instance
      *
      * @param Client $client GuzzleHttp Client
      */
-    public function __construct(Client $client = null)
-    {
-        //Set the client
-        $this->client = $client ?: new Client();
+    public function __construct(Client $client = null) {
+        if (!$client) {
+            $client = new Client();
+        }
+        $this->client = $client;
     }
 
     /**
@@ -47,22 +45,25 @@ class DropboxGuzzleHttpClient implements DropboxHttpClientInterface
      *
      * @throws \Kunnu\Dropbox\Exceptions\DropboxClientException
      */
-    public function send($url, $method, $body, $headers = [], $options = [])
-    {
+    public function send($url, $method, $body, $headers = [], $options = []) {
         //Create a new Request Object
-        $request = new Request($method, $url, $headers, $body);
+        if (isset($options['sink'])) {
+            $options['save_to'] = $options['sink'];
+            unset($options['sink']);
+        }
+        $request = $this->client->createRequest($method, $url, $options);
+        $request->setHeaders($headers);
+        if ($body) {
+            $request->setBody(Stream::factory($body));
+        }
 
         try {
             //Send the Request
-            $rawResponse = $this->client->send($request, $options);
-        } catch (BadResponseException $e) {
-            throw new DropboxClientException($e->getResponse()->getBody(), $e->getCode(), $e);
+            $rawResponse = $this->client->send($request);
         } catch (RequestException $e) {
             $rawResponse = $e->getResponse();
 
-            if (! $rawResponse instanceof ResponseInterface) {
-                throw new DropboxClientException($e->getMessage(), $e->getCode());
-            }
+            throw new DropboxClientException($e->getMessage(), $e->getCode());
         }
 
         //Something went wrong
@@ -70,7 +71,7 @@ class DropboxGuzzleHttpClient implements DropboxHttpClientInterface
             throw new DropboxClientException($rawResponse->getBody());
         }
 
-        if (array_key_exists('sink', $options)) {
+        if (array_key_exists('save_to', $options)) {
             //Response Body is saved to a file
             $body = '';
         } else {
@@ -86,26 +87,19 @@ class DropboxGuzzleHttpClient implements DropboxHttpClientInterface
     }
 
     /**
-     * Get the Response Body.
+     * Get the Response Body
      *
-     * @param string|\Psr\Http\Message\ResponseInterface $response Response object
+     * @param string|GuzzleHttp\Message\Response $response Response object
      *
      * @return string
      */
-    protected function getResponseBody($response)
-    {
+    protected function getResponseBody($response) {
         //Response must be string
-        $body = $response;
-
-        if ($response instanceof ResponseInterface) {
-            //Fetch the body
-            $body = $response->getBody();
-        }
-
-        if ($body instanceof StreamInterface) {
+        $body = $response->getBody();
+        if ($body instanceof GuzzleHttp\Stream\Stream) {
             $body = $body->getContents();
         }
 
-        return (string) $body;
+        return $body;
     }
 }
